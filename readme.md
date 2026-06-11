@@ -88,7 +88,3 @@ go build -ldflags="-H windowsgui" -o osd-clock-win.exe main.go
 Источник иконки: [Hour glass icons created by Fliqqer - Flaticon](https://www.flaticon.com/free-icons/hour-glass)
 
 Лицензия иконки: Свободное использование с указанием авторства.
-
-###📜 Лицензия
-
-Данное программное обеспечение распространяется на условиях MIT License.
