@@ -13,6 +13,7 @@ import (
 	"github.com/lxn/win"
 )
 
+var isVisible = true
 var (
 	user32           = syscall.NewLazyDLL("user32.dll")
 	gdi32            = syscall.NewLazyDLL("gdi32.dll")
@@ -95,20 +96,36 @@ func main() {
 }
 
 func onReady() {
-	systray.SetTitle("OSD Clock")
+	systray.SetIcon(iconBytes)
+	systray.SetTitle("Desktop Clock")
 	systray.SetTooltip("Прозрачные Часы")
 
-	systray.SetIcon(iconBytes)
+	// Создаем пункт меню с галочкой
+	mVisible := systray.AddMenuItem("Показать часы", "Показать или скрыть часы")
+	mVisible.Check() // По умолчанию включено
+	systray.AddSeparator()
+	mQuit := systray.AddMenuItem("Выход", "Закрыть приложение")
 
-	mQuit := systray.AddMenuItem("Выход", "Закрыть часы")
-
-	// Обработчик клика по кнопке Выход
 	go func() {
-		<-mQuit.ClickedCh
-		systray.Quit()
+		for {
+			select {
+			case <-mVisible.ClickedCh:
+				if isVisible {
+					win.ShowWindow(clockHwnd, win.SW_HIDE)
+					mVisible.Uncheck()
+					isVisible = false
+				} else {
+					win.ShowWindow(clockHwnd, win.SW_SHOW)
+					mVisible.Check()
+					isVisible = true
+				}
+			case <-mQuit.ClickedCh:
+				systray.Quit()
+				return
+			}
+		}
 	}()
 
-	// Само Win32-окно часов запускаем в отдельном потоке
 	go startClockWindow()
 }
 
