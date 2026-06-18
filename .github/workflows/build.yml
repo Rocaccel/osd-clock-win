@@ -36,7 +36,7 @@ jobs:
         go build -o ${{ env.FILENAME }} .
       
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: osd-clock-win64-${{ env.VERSION }}
         path: ${{ env.FILENAME }}
