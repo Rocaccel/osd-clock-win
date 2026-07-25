@@ -29,15 +29,9 @@
 
 ---
 
-## Скриншот
-
-> Здесь можно разместить изображение программы.
-
----
-
 ## Установка
 
-Скачайте готовую сборку со страницы **Releases** или соберите программу самостоятельно.
+Скачайте готовую сборку [![Latest Release](https://img.shields.io/github/v/release/Rocaccel/osd-clock-win?label=Latest%20Release)](https://github.com/Rocaccel/osd-clock-win/releases/latest) или соберите программу самостоятельно.
 
 ### Сборка
 
