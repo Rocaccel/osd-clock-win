@@ -1,89 +1,203 @@
-# 🕒 OSD Clock (WinAPI Edition)
+# OSD Clock for Windows
 
-**OSD Clock** — это ультра-легкие цифровые часы поверх всех окон рабочего стола Windows, написанные на языке Go с использованием прямого обращения к системным библиотекам WinAPI (GDI/User32).
+A lightweight on-screen digital clock for Microsoft Windows written in Go using the native Win32 API.
 
-### 📖 Аннотация
+The application displays a transparent clock above all windows, consumes virtually no system resources, and can be configured through a TOML configuration file or command-line arguments.
 
-В отличие от обычных приложений, эти часы не используют графические движки или GPU. Весь процесс отрисовки берет на себя ядро Windows, что позволяет достичь **0.0% нагрузки на процессор и видеокарту**. Окно часов полностью прозрачно для кликов мыши, не мешает работе и всегда находится поверх других окон.
+![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![Go](https://img.shields.io/badge/Go-1.24+-00ADD8)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
-#### Ключевые особенности:
 
-* **Полная прозрачность:** Часы не имеют фона и не мешают кликам (пропускают нажатия мыши сквозь себя).
+## Features
 
-* **Topmost:** Всегда отображаются поверх других окон.
+- Native Win32 implementation (User32 + GDI)
+- Transparent click-through window
+- Always-on-top display
+- System tray icon
+- Automatic screen position adjustment
+- 12-hour and 24-hour time formats
+- TOML configuration support
+- Command-line argument overrides
+- No external GUI framework
+- Extremely low CPU and memory usage
 
-* **Управление через трей:** Быстрый выход и статус через иконку в области уведомлений.
-
-* **Гибкая настройка:** Все параметры (цвет, шрифт, позиция) задаются через аргументы командной строки.
 ---
-### 🚀 Быстрый старт
 
-1. **Компиляция:**
-Для сборки без консольного окна используйте флаг:
+## Installation
+
+Download the latest release or build from source.
+
+### Build
+
 ```bash
-go build -ldflags="-H windowsgui" -o osd-clock-win.exe main.go
-
+go build -ldflags="-H windowsgui" -o osd-clock-win.exe
 ```
 
+---
 
-2. **Запуск:**
-Просто запустите `osd-clock-win.exe`. По умолчанию они появятся в нижнем правом углу в зеленом цвете.
+## Running
+
+```
+osd-clock-win.exe
+```
+
+The application starts minimized to the system tray and displays the clock on the desktop.
 
 ---
 
-### ⌨️ Параметры командной строки (Ключи)
+## Configuration
 
-Вы можете настраивать внешний вид часов через аргументы при запуске.
+Configuration is stored in:
 
-| Ключ | Описание | Значение по умолчанию | Пример |
-| --- | --- | --- | --- |
-| `-color` | Цвет текста (имена цветов) | `green` | `-color red` |
-| `-font` | Название системного шрифта | `Consolas` | `-font "Segoe UI"` |
-| `-size` | Размер шрифта (высота) | `48` | `-size 72` |
-| `-weight` | Жирность шрифта (100-900) | `400` | `-weight 700` |
-| `-x` | Координата X на экране | `-1` (авто-угол) | `-x 500` |
-| `-y` | Координата Y на экране | `-1` (авто-угол) | `-y 200` |
+```
+config.toml
+```
 
-**Доступные цвета:** `red`, `green`, `blue`, `white`, `yellow`, `cyan`, `magenta`, `gray`.
+Example:
 
----
+```toml
+font_name = "Ubuntu"
+font_size = 50
+font_weight = 600
 
-### 🛠 Управление и Трей
+color = "yellow"
 
-* **Системный трей:** При запуске в области уведомлений (возле часов Windows) появляется иконка приложения.
-* **Контекстное меню:** Нажмите **правой кнопкой мыши** по иконке в трее, чтобы вызвать меню.
-* **Выход:** Выберите пункт **"Выход"** в меню трея для завершения работы программы.
-* **Смена разрешения:** Часы автоматически пересчитывают свою позицию при изменении разрешения монитора (если не заданы жесткие координаты `-x` и `-y`).
+pos_x = 1760
+pos_y = 30
 
----
+time_format = "12h"
+```
 
-### 💡 Примеры конфигураций
+### Configuration options
 
-* **Минимализм (Тонкий шрифт Segoe):**
-`.\osd-clock-win.exe -font "Segoe UI" -weight 300 -color white -size 40`
-* **Ретро-терминал:**
-`.\osd-clock-win.exe -font "Courier New" -color green -weight 700`
-* **Крупное табло в центре сверху:**
-`.\osd-clock-win.exe -x 800 -y 50 -size 120 -color yellow -font "Impact"`
-
----
-
-### 🔄 Автозагрузка (Инструкция)
-
-Чтобы часы запускались сами при включении компьютера:
-
-1. Нажмите `Win + R`, введите `shell:startup` и нажмите Enter.
-2. Создайте ярлык для своего `osd-clock-win.exe` в открывшейся папке.
-3. В свойствах ярлыка (поле "Объект") вы можете дописать нужные вам ключи, например:
-`C:\Path\To\osd-clock-win.exe -color cyan -size 50`
+| Parameter | Description |
+|-----------|-------------|
+| `font_name` | Windows font name |
+| `font_size` | Font size |
+| `font_weight` | Font weight (100–900) |
+| `color` | Clock text color |
+| `pos_x` | Window X position (`-1` = automatic) |
+| `pos_y` | Window Y position (`-1` = automatic) |
+| `time_format` | `12h` or `24h` |
 
 ---
 
-### ⚠️ Технические примечания
+## Command-line options
 
-* **Шрифты:** Если вы используете не моноширинный шрифт (например, Arial), цифры могут слегка смещаться при смене минут. Рекомендуется использовать `Consolas` или `Segoe UI Semibold`.
+Arguments override values from `config.toml`.
 
-### 🎨 Графика и ресурсы
-Источник иконки: [Hour glass icons created by Fliqqer - Flaticon](https://www.flaticon.com/free-icons/hour-glass)
-Лицензия иконки: Свободное использование с указанием авторства.
+| Option | Description |
+|---------|-------------|
+| `-font` | Font name |
+| `-size` | Font size |
+| `-weight` | Font weight |
+| `-color` | Text color |
+| `-x` | X coordinate |
+| `-y` | Y coordinate |
+| `-format` | `12h` or `24h` |
+
+Example:
+
+```bash
+osd-clock-win.exe -font "Segoe UI" -size 48 -color white
+```
+
+---
+
+## Available colors
+
+- green
+- red
+- blue
+- white
+- yellow
+- cyan
+- magenta
+- gray
+
+---
+
+## System tray
+
+The application places an icon in the Windows notification area.
+
+Available actions:
+
+- Hide/Show The Clock
+- Exit application
+
+---
+
+## Architecture
+
+The application is implemented using native Windows APIs:
+
+- User32
+- GDI32
+- Layered windows
+- Transparent click-through window
+- Windows timers
+- System tray notifications
+
+No Electron, Qt, GTK, Wails, Fyne or other GUI frameworks are used.
+
+---
+
+## Performance
+
+Designed for minimal overhead.
+
+Characteristics:
+
+- native Win32 rendering
+- no GPU acceleration required
+- timer refresh once per second
+- zero-allocation time formatting
+- negligible CPU usage
+
+---
+
+## Project structure
+
+```
+.
+├── main.go
+├── config.toml
+├── icon.ico
+├── LICENSE
+├── go.mod
+└── winres/
+```
+
+---
+
+## Requirements
+
+- Windows 10 or newer
+- Go 1.24+
+
+---
+
+## Third-party libraries
+
+- github.com/lxn/win
+- github.com/getlantern/systray
+- github.com/pelletier/go-toml/v2
+
+---
+
+## License
+
+This project is distributed under the GLWT(Good Luck With That) Public License.
+
+---
+
+## Credits
+
+Application icon:
+
+Hour Glass icon by Fliqqer
+
+https://www.flaticon.com/free-icons/hour-glass
