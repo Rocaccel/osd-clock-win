@@ -1,5 +1,9 @@
 # OSD Clock for Windows
+
 🇷🇺 **Русская версия:** [README.ru.md](README.ru.md)
+
+---
+
 A lightweight on-screen digital clock for Microsoft Windows written in Go using the native Win32 API.
 
 The application displays a transparent clock above all windows, consumes virtually no system resources, and can be configured through a TOML configuration file or command-line arguments.
