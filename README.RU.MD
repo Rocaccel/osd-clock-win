@@ -1,6 +1,6 @@
 # OSD Clock для Windows
 
-🇺🇸 **English version:** [README.md](README.md)
+🇺🇸 **English version:** [README.MD](README.MD)
 
 ---
 
