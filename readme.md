@@ -6,7 +6,6 @@ The application displays a transparent clock above all windows, consumes virtual
 
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![Go](https://img.shields.io/badge/Go-1.24+-00ADD8)
-![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
