@@ -33,6 +33,35 @@
 
 Скачайте готовую сборку [![Latest Release](https://img.shields.io/github/v/release/Rocaccel/osd-clock-win?label=Latest%20Release)](https://github.com/Rocaccel/osd-clock-win/releases/latest) или соберите программу самостоятельно.
 
+### Установка через Scoop
+
+Программа может быть установлена через встроенный Scoop bucket.
+
+#### Добавить bucket
+
+```powershell
+scoop bucket add osd-clock-win https://github.com/Rocaccel/osd-clock-win
+```
+
+#### Установить программу
+
+```powershell
+scoop install osd-clock
+```
+
+#### Обновить программу
+
+```powershell
+scoop update osd-clock
+```
+
+#### Обновить все установленные приложения
+
+```powershell
+scoop update *
+```
+
+
 ### Сборка
 
 ```bash

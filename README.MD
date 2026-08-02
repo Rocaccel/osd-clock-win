@@ -32,6 +32,36 @@ The application displays a transparent clock above all windows, consumes virtual
 
 Download the latest release or build from source.
 
+### Install via Scoop
+
+The application can be installed using the included Scoop bucket.
+
+#### Add the bucket
+
+```powershell
+scoop bucket add osd-clock-win https://github.com/Rocaccel/osd-clock-win
+```
+
+#### Install
+
+```powershell
+scoop install osd-clock
+```
+
+#### Update
+
+Update only OSD Clock:
+
+```powershell
+scoop update osd-clock
+```
+
+Or update all installed applications:
+
+```powershell
+scoop update *
+```
+
 ### Build
 
 ```bash
