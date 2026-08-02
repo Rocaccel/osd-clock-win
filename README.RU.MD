@@ -36,7 +36,7 @@
 ### Сборка
 
 ```bash
-go build -ldflags="-H windowsgui" -o osd-clock-win.exe
+go build -ldflags="-H windowsgui" -o osd-clock.exe
 ```
 
 ---
@@ -44,7 +44,7 @@ go build -ldflags="-H windowsgui" -o osd-clock-win.exe
 ## Запуск
 
 ```
-osd-clock-win.exe
+osd-clock.exe
 ```
 
 После запуска приложение помещает значок в системный трей и отображает часы на рабочем столе.
@@ -105,7 +105,7 @@ time_format = "12h"
 Пример:
 
 ```bash
-osd-clock-win.exe -font "Segoe UI" -size 48 -color white
+osd-clock.exe -font "Segoe UI" -size 48 -color white
 ```
 
 ---

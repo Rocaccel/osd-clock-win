@@ -35,7 +35,7 @@ Download the latest release or build from source.
 ### Build
 
 ```bash
-go build -ldflags="-H windowsgui" -o osd-clock-win.exe
+go build -ldflags="-H windowsgui" -o osd-clock.exe
 ```
 
 ---
@@ -43,7 +43,7 @@ go build -ldflags="-H windowsgui" -o osd-clock-win.exe
 ## Running
 
 ```
-osd-clock-win.exe
+osd-clock.exe
 ```
 
 The application starts minimized to the system tray and displays the clock on the desktop.
@@ -104,7 +104,7 @@ Arguments override values from `config.toml`.
 Example:
 
 ```bash
-osd-clock-win.exe -font "Segoe UI" -size 48 -color white
+osd-clock.exe -font "Segoe UI" -size 48 -color white
 ```
 
 ---
