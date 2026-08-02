@@ -4,7 +4,7 @@
     "homepage": "https://github.com/Rocaccel/osd-clock-win",
     "license": "GLWT",
     "url": "https://github.com/Rocaccel/osd-clock-win/releases/download/v0.1.1/osd-clock-win-v0.1.1.zip",
-    "hash": "sha256:126d43d35202f41196d67cf160086f8a18cfe6a8c1bde60f9ab9203c0435ed0e",
+    "hash": "sha256:cf1d0cb93918c3118909b4f6eaeadc0c66d51c9d6e7513a03950ac2bcb10262e",
     "bin": "osd-clock.exe",
     "persist": "config.toml",
     "checkver": "github",

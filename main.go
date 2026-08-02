@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -170,38 +171,54 @@ type ClockWindow struct {
 	config Config
 	hwnd   win.HWND
 
+	// Кэшированные разрешения экрана для мгновенного CalculateBounds
+	screenWidth  int32
+	screenHeight int32
+
 	// Кэшированные Win32 GDI-ресурсы
 	fontHandle  win.HFONT
 	brushHandle win.HBRUSH
 
-	// Предварительно выделенный буфер времени
+	// Предварительно выделенный буфер времени (потокобезопасная отрисовка)
 	timeBuffer TimeBuffer
 
 	isVisible bool
 }
 
 func NewClockWindow(cfg Config) *ClockWindow {
-	return &ClockWindow{
+	cw := &ClockWindow{
 		config:    cfg,
 		isVisible: true,
 	}
+	cw.UpdateScreenMetrics()
+	return cw
+}
+
+// UpdateScreenMetrics кэширует параметры экрана при старте и смене разрешения
+func (cw *ClockWindow) UpdateScreenMetrics() {
+	sw := win.GetSystemMetrics(win.SM_CXSCREEN)
+	sh := win.GetSystemMetrics(win.SM_CYSCREEN)
+
+	cw.mu.Lock()
+	cw.screenWidth = sw
+	cw.screenHeight = sh
+	cw.mu.Unlock()
 }
 
 func (cw *ClockWindow) CalculateBounds() WindowBounds {
 	cw.mu.RLock()
 	x := cw.config.PositionX
 	y := cw.config.PositionY
+	sw := cw.screenWidth
+	sh := cw.screenHeight
 	cw.mu.RUnlock()
 
 	if x == autoPosition || y == autoPosition {
-		screenWidth := int(win.GetSystemMetrics(win.SM_CXSCREEN))
-		screenHeight := int(win.GetSystemMetrics(win.SM_CYSCREEN))
-
 		if x == autoPosition {
-			x = screenWidth - defaultClockWidth - screenMarginRight
+			x = int(sw) - defaultClockWidth - screenMarginRight
 		}
 		if y == autoPosition {
-			y = screenHeight - defaultClockHeight - screenMarginBottom
+			y = int(sh) - defaultClockHeight - screenMarginBottom
 		}
 	}
 
@@ -325,16 +342,11 @@ func parseColor(colorName string) win.COLORREF {
 	return colorPalette[defaultColorName]
 }
 
-// findConfigFile выполняет каскадный поиск конфига:
-// 1. В текущей рабочей директории (CWD)
-// 2. В директории бинарного файла (.exe)
 func findConfigFile() string {
-	// 1. Проверяем CWD
 	if _, err := os.Stat(defaultConfigFile); err == nil {
 		return defaultConfigFile
 	}
 
-	// 2. Проверяем папку .exe
 	if exePath, err := os.Executable(); err == nil {
 		exeDir := filepath.Dir(exePath)
 		configNearExe := filepath.Join(exeDir, defaultConfigFile)
@@ -403,6 +415,9 @@ func loadConfig() Config {
 }
 
 var globalClockApp *ClockWindow
+
+// atomicRenderState отслеживает статус рендеринга кадра во избежание наслоения
+var atomicRenderState uint32
 
 // ============================================================================
 // 5. ТОЧКА ВХОДА И СИСТЕМНЫЙ ТРЕЙ
@@ -526,6 +541,8 @@ func startClockWindow() {
 func wndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 	switch msg {
 	case win.WM_DISPLAYCHANGE:
+		// Обновляем кэш параметров монитора и пересчитываем позицию
+		globalClockApp.UpdateScreenMetrics()
 		globalClockApp.UpdatePosition()
 		return 0
 
@@ -551,6 +568,12 @@ func wndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 }
 
 func renderClockFrameBuffered(hwnd win.HWND) {
+	// Исключаем повторный вход/перенасыщение очереди кадров
+	if !atomic.CompareAndSwapUint32(&atomicRenderState, 0, 1) {
+		return
+	}
+	defer atomic.StoreUint32(&atomicRenderState, 0)
+
 	var ps win.PAINTSTRUCT
 	hdc := win.BeginPaint(hwnd, &ps)
 	if hdc == 0 {
@@ -589,7 +612,7 @@ func renderClockFrameBuffered(hwnd win.HWND) {
 
 	api := getWin32API()
 
-	// 1. Очистка контекста фоновым цветом
+	// 1. Очистка контекста
 	api.fillRect.Call(uintptr(memDC), uintptr(unsafe.Pointer(&rect)), uintptr(brushHandle))
 
 	// 2. Настройка текста и шрифта
@@ -597,7 +620,7 @@ func renderClockFrameBuffered(hwnd win.HWND) {
 	win.SetTextColor(memDC, textColor)
 	win.SetBkMode(memDC, win.TRANSPARENT)
 
-	// 3. Форматирование времени
+	// 3. Форматирование времени (внутри Lock для защиты timeBuffer)
 	globalClockApp.mu.Lock()
 	timeUtf16Ptr := globalClockApp.timeBuffer.FormatNow(time.Now(), timeFormat)
 	globalClockApp.mu.Unlock()
@@ -613,7 +636,7 @@ func renderClockFrameBuffered(hwnd win.HWND) {
 
 	win.SelectObject(memDC, oldFont)
 
-	// 5. Вывод кадра
+	// 5. Вывод кадра через Double Buffering
 	api.bitBlt.Call(
 		uintptr(hdc), 0, 0,
 		uintptr(defaultClockWidth), uintptr(defaultClockHeight),
