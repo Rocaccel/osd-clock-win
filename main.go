@@ -7,20 +7,21 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
 
-	"github.com/pelletier/go-toml/v2"
 	"github.com/getlantern/systray"
 	"github.com/lxn/win"
+	"github.com/pelletier/go-toml/v2"
 )
 
 //go:embed icon.ico
 var iconBytes []byte
 
 // ============================================================================
-// 1. САМОДОКУМЕНТИРУЕМЫЕ КОНСТАНТЫ И ДОМЕННЫЕ ТИПЫ
+// 1. КОНСТАНТЫ И ДОМЕННЫЕ ТИПЫ
 // ============================================================================
 
 const (
@@ -36,10 +37,10 @@ const (
 	lwaColorKey = 0x00000001
 	dtLeft      = 0x00000000
 	dtNoClip    = 0x00000100
-	srccopy     = 0x00CC0020 // Raster operation code для BitBlt
+	srccopy     = 0x00CC0020 // Raster operation code (SRCCOPY)
 
 	// Настройки отрисовки
-	redrawIntervalMs  = 1000 // Интервал обновления (1 секунда)
+	redrawIntervalMs  = 1000
 	timerIDRender     = 1
 	defaultColorName  = "green"
 	defaultFontName   = "Consolas"
@@ -65,7 +66,7 @@ type Config struct {
 	TextColor  win.COLORREF `toml:"-"`
 	PositionX  int          `toml:"pos_x"`
 	PositionY  int          `toml:"pos_y"`
-	TimeFormat TimeFormat   `toml:"time_format"` // "24h" или "12h"
+	TimeFormat TimeFormat   `toml:"time_format"`
 }
 
 // WindowBounds — доменное представление позиции и размеров окна.
@@ -82,8 +83,7 @@ type TimeBuffer struct {
 }
 
 // FormatNow24h записывает текущие часы и минуты (24h) напрямую в буфер UTF-16.
-func (tb *TimeBuffer) FormatNow24h() *uint16 {
-	now := time.Now()
+func (tb *TimeBuffer) FormatNow24h(now time.Time) *uint16 {
 	hour, min, _ := now.Clock()
 
 	tb.utf16Buf[0] = uint16('0' + hour/10)
@@ -91,14 +91,13 @@ func (tb *TimeBuffer) FormatNow24h() *uint16 {
 	tb.utf16Buf[2] = uint16(':')
 	tb.utf16Buf[3] = uint16('0' + min/10)
 	tb.utf16Buf[4] = uint16('0' + min%10)
-	tb.utf16Buf[5] = 0 // Null-terminator для WinAPI C-strings
+	tb.utf16Buf[5] = 0
 
 	return &tb.utf16Buf[0]
 }
 
 // FormatNow12h записывает текущие часы и минуты в 12-часовом формате (без AM/PM) в буфер UTF-16.
-func (tb *TimeBuffer) FormatNow12h() *uint16 {
-	now := time.Now()
+func (tb *TimeBuffer) FormatNow12h(now time.Time) *uint16 {
 	hour, min, _ := now.Clock()
 
 	hour12 := hour % 12
@@ -111,17 +110,17 @@ func (tb *TimeBuffer) FormatNow12h() *uint16 {
 	tb.utf16Buf[2] = uint16(':')
 	tb.utf16Buf[3] = uint16('0' + min/10)
 	tb.utf16Buf[4] = uint16('0' + min%10)
-	tb.utf16Buf[5] = 0 // Null-terminator
+	tb.utf16Buf[5] = 0
 
 	return &tb.utf16Buf[0]
 }
 
 // FormatNow формирует время в буфере в соответствии с выбранным форматом.
-func (tb *TimeBuffer) FormatNow(fmt TimeFormat) *uint16 {
+func (tb *TimeBuffer) FormatNow(now time.Time, fmt TimeFormat) *uint16 {
 	if fmt == Format12H {
-		return tb.FormatNow12h()
+		return tb.FormatNow12h(now)
 	}
-	return tb.FormatNow24h()
+	return tb.FormatNow24h(now)
 }
 
 // ============================================================================
@@ -137,27 +136,36 @@ type win32API struct {
 	bitBlt           *syscall.LazyProc
 }
 
-func newWin32API() *win32API {
-	user32 := syscall.NewLazyDLL("user32.dll")
-	gdi32 := syscall.NewLazyDLL("gdi32.dll")
+var (
+	winAPIOnce sync.Once
+	winAPI     *win32API
+)
 
-	return &win32API{
-		setLayeredWindow: user32.NewProc("SetLayeredWindowAttributes"),
-		createFont:       gdi32.NewProc("CreateFontW"),
-		drawText:         user32.NewProc("DrawTextW"),
-		fillRect:         user32.NewProc("FillRect"),
-		createSolidBrush: gdi32.NewProc("CreateSolidBrush"),
-		bitBlt:           gdi32.NewProc("BitBlt"),
-	}
+// getWin32API гарантирует безопасную и синглтон-инициализацию WinAPI методов.
+func getWin32API() *win32API {
+	winAPIOnce.Do(func() {
+		user32 := syscall.NewLazyDLL("user32.dll")
+		gdi32 := syscall.NewLazyDLL("gdi32.dll")
+
+		winAPI = &win32API{
+			setLayeredWindow: user32.NewProc("SetLayeredWindowAttributes"),
+			createFont:       gdi32.NewProc("CreateFontW"),
+			drawText:         user32.NewProc("DrawTextW"),
+			fillRect:         user32.NewProc("FillRect"),
+			createSolidBrush: gdi32.NewProc("CreateSolidBrush"),
+			bitBlt:           gdi32.NewProc("BitBlt"),
+		}
+	})
+	return winAPI
 }
 
-var winAPI = newWin32API()
-
 // ============================================================================
-// 3. ДОМЕННЫЙ ОБЪЕКТ ЧАСОВ
+// 3. ДОМЕННЫЙ ОБЪЕКТ ЧАСОВ И УПРАВЛЕНИЕ СОСТОЯНИЕМ
 // ============================================================================
 
 type ClockWindow struct {
+	mu sync.RWMutex
+
 	config Config
 	hwnd   win.HWND
 
@@ -179,8 +187,10 @@ func NewClockWindow(cfg Config) *ClockWindow {
 }
 
 func (cw *ClockWindow) CalculateBounds() WindowBounds {
+	cw.mu.RLock()
 	x := cw.config.PositionX
 	y := cw.config.PositionY
+	cw.mu.RUnlock()
 
 	if x == autoPosition || y == autoPosition {
 		screenWidth := int(win.GetSystemMetrics(win.SM_CXSCREEN))
@@ -203,12 +213,16 @@ func (cw *ClockWindow) CalculateBounds() WindowBounds {
 }
 
 func (cw *ClockWindow) UpdatePosition() {
-	if cw.hwnd == 0 {
+	cw.mu.RLock()
+	hwnd := cw.hwnd
+	cw.mu.RUnlock()
+
+	if hwnd == 0 {
 		return
 	}
 	bounds := cw.CalculateBounds()
 	ok := win.SetWindowPos(
-		cw.hwnd,
+		hwnd,
 		win.HWND_TOPMOST,
 		bounds.X, bounds.Y,
 		bounds.Width, bounds.Height,
@@ -220,25 +234,38 @@ func (cw *ClockWindow) UpdatePosition() {
 }
 
 func (cw *ClockWindow) ToggleVisibility(menuItem *systray.MenuItem) {
+	cw.mu.Lock()
 	cw.isVisible = !cw.isVisible
+	visible := cw.isVisible
+	hwnd := cw.hwnd
+	cw.mu.Unlock()
 
-	if cw.isVisible {
-		win.ShowWindow(cw.hwnd, win.SW_SHOW)
+	if hwnd == 0 {
+		return
+	}
+
+	if visible {
+		win.ShowWindow(hwnd, win.SW_SHOW)
 		menuItem.Check()
 	} else {
-		win.ShowWindow(cw.hwnd, win.SW_HIDE)
+		win.ShowWindow(hwnd, win.SW_HIDE)
 		menuItem.Uncheck()
 	}
 }
 
 func (cw *ClockWindow) InitGDIResources() error {
+	cw.mu.Lock()
+	defer cw.mu.Unlock()
+
+	api := getWin32API()
+
 	fontNamePtr, err := syscall.UTF16PtrFromString(cw.config.FontName)
 	if err != nil {
 		log.Printf("[WARN] Некорректное имя шрифта '%s', сброс на дефолтный: %v", cw.config.FontName, err)
 		fontNamePtr, _ = syscall.UTF16PtrFromString(defaultFontName)
 	}
 
-	hFont, _, _ := winAPI.createFont.Call(
+	hFont, _, _ := api.createFont.Call(
 		uintptr(cw.config.FontSize), 0, 0, 0,
 		uintptr(cw.config.FontWeight), 0, 0, 0,
 		win.DEFAULT_CHARSET, 0, 0, 4, 0,
@@ -249,8 +276,11 @@ func (cw *ClockWindow) InitGDIResources() error {
 	}
 	cw.fontHandle = win.HFONT(hFont)
 
-	hBrush, _, _ := winAPI.createSolidBrush.Call(uintptr(0))
+	// Кисть прозрачного цвета (RGB 0,0,0) для lwaColorKey
+	hBrush, _, _ := api.createSolidBrush.Call(uintptr(0))
 	if hBrush == 0 {
+		win.DeleteObject(win.HGDIOBJ(cw.fontHandle))
+		cw.fontHandle = 0
 		return fmt.Errorf("ошибка вызова CreateSolidBrush (code: %d)", win.GetLastError())
 	}
 	cw.brushHandle = win.HBRUSH(hBrush)
@@ -259,6 +289,9 @@ func (cw *ClockWindow) InitGDIResources() error {
 }
 
 func (cw *ClockWindow) FreeGDIResources() {
+	cw.mu.Lock()
+	defer cw.mu.Unlock()
+
 	if cw.fontHandle != 0 {
 		win.DeleteObject(win.HGDIOBJ(cw.fontHandle))
 		cw.fontHandle = 0
@@ -344,15 +377,15 @@ func loadConfig() Config {
 	return cfg
 }
 
-var clockApp *ClockWindow
+var globalClockApp *ClockWindow
 
 // ============================================================================
-// 5. ВХОДНАЯ ТОЧКА И СИСТЕМНЫЙ ТРЕЙ
+// 5. ТОЧКА ВХОДА И СИСТЕМНЫЙ ТРЕЙ
 // ============================================================================
 
 func main() {
 	config := loadConfig()
-	clockApp = NewClockWindow(config)
+	globalClockApp = NewClockWindow(config)
 
 	systray.Run(onReady, onExit)
 }
@@ -372,7 +405,7 @@ func onReady() {
 		for {
 			select {
 			case <-mToggleVisible.ClickedCh:
-				clockApp.ToggleVisibility(mToggleVisible)
+				globalClockApp.ToggleVisibility(mToggleVisible)
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 				return
@@ -384,17 +417,24 @@ func onReady() {
 }
 
 func onExit() {
-	if clockApp != nil && clockApp.hwnd != 0 {
-		win.PostMessage(clockApp.hwnd, win.WM_CLOSE, 0, 0)
+	if globalClockApp != nil {
+		globalClockApp.mu.RLock()
+		hwnd := globalClockApp.hwnd
+		globalClockApp.mu.RUnlock()
+
+		if hwnd != 0 {
+			win.PostMessage(hwnd, win.WM_CLOSE, 0, 0)
+		}
 	}
 }
 
 // ============================================================================
-// 6. WIN32 EVENT LOOP И ДВОЙНАЯ БУФЕРИЗАЦИЯ
+// 6. WIN32 EVENT LOOP И ОТРИСОВКА КАДРА
 // ============================================================================
 
 func startClockWindow() {
 	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	className, err := syscall.UTF16PtrFromString("ClockWindowClass")
 	if err != nil {
@@ -419,7 +459,7 @@ func startClockWindow() {
 		log.Fatalf("[FATAL] Не удалось зарегистрировать класс окна. Код ошибки: %d", win.GetLastError())
 	}
 
-	bounds := clockApp.CalculateBounds()
+	bounds := globalClockApp.CalculateBounds()
 
 	hwnd := win.CreateWindowEx(
 		win.WS_EX_LAYERED|win.WS_EX_TRANSPARENT|win.WS_EX_TOPMOST|win.WS_EX_TOOLWINDOW,
@@ -434,15 +474,18 @@ func startClockWindow() {
 		log.Fatalf("[FATAL] Ошибка создания Win32 окна. Код ошибки: %d", win.GetLastError())
 	}
 
-	clockApp.hwnd = hwnd
+	globalClockApp.mu.Lock()
+	globalClockApp.hwnd = hwnd
+	globalClockApp.mu.Unlock()
 
-	if err := clockApp.InitGDIResources(); err != nil {
+	if err := globalClockApp.InitGDIResources(); err != nil {
 		log.Fatalf("[FATAL] Ошибка инициализации GDI ресурсов: %v", err)
 	}
 
-	clockApp.UpdatePosition()
+	globalClockApp.UpdatePosition()
 
-	winAPI.setLayeredWindow.Call(uintptr(hwnd), 0, 255, lwaColorKey)
+	api := getWin32API()
+	api.setLayeredWindow.Call(uintptr(hwnd), 0, 255, lwaColorKey)
 
 	if timerID := win.SetTimer(hwnd, timerIDRender, redrawIntervalMs, 0); timerID == 0 {
 		log.Printf("[WARN] Сбой инициализации Win32 таймера. Код ошибки: %d", win.GetLastError())
@@ -458,19 +501,23 @@ func startClockWindow() {
 func wndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 	switch msg {
 	case win.WM_DISPLAYCHANGE:
-		clockApp.UpdatePosition()
+		globalClockApp.UpdatePosition()
 		return 0
 
 	case win.WM_TIMER:
-		win.InvalidateRect(hwnd, nil, true)
+		win.InvalidateRect(hwnd, nil, false) // false отключает лишнюю стирку фона (Erase Bkgnd)
 		return 0
+
+	case win.WM_ERASEBKGND:
+		return 1 // Предотвращаем мерцание (flicker) при перерисовке
 
 	case win.WM_PAINT:
 		renderClockFrameBuffered(hwnd)
 		return 0
 
 	case win.WM_DESTROY:
-		clockApp.FreeGDIResources()
+		win.KillTimer(hwnd, timerIDRender)
+		globalClockApp.FreeGDIResources()
 		win.PostQuitMessage(0)
 		return 0
 	}
@@ -481,6 +528,9 @@ func wndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 func renderClockFrameBuffered(hwnd win.HWND) {
 	var ps win.PAINTSTRUCT
 	hdc := win.BeginPaint(hwnd, &ps)
+	if hdc == 0 {
+		return
+	}
 	defer win.EndPaint(hwnd, &ps)
 
 	memDC := win.CreateCompatibleDC(hdc)
@@ -505,24 +555,41 @@ func renderClockFrameBuffered(hwnd win.HWND) {
 		Bottom: defaultClockHeight,
 	}
 
-	winAPI.fillRect.Call(uintptr(memDC), uintptr(unsafe.Pointer(&rect)), uintptr(clockApp.brushHandle))
+	globalClockApp.mu.RLock()
+	brushHandle := globalClockApp.brushHandle
+	fontHandle := globalClockApp.fontHandle
+	textColor := globalClockApp.config.TextColor
+	timeFormat := globalClockApp.config.TimeFormat
+	globalClockApp.mu.RUnlock()
 
-	oldFont := win.SelectObject(memDC, win.HGDIOBJ(clockApp.fontHandle))
-	win.SetTextColor(memDC, clockApp.config.TextColor)
+	api := getWin32API()
+
+	// 1. Очистка контекста совместимым фоновым цветом
+	api.fillRect.Call(uintptr(memDC), uintptr(unsafe.Pointer(&rect)), uintptr(brushHandle))
+
+	// 2. Настройка текста и шрифта
+	oldFont := win.SelectObject(memDC, win.HGDIOBJ(fontHandle))
+	win.SetTextColor(memDC, textColor)
 	win.SetBkMode(memDC, win.TRANSPARENT)
 
-	timeUtf16Ptr := clockApp.timeBuffer.FormatNow(clockApp.config.TimeFormat)
+	// 3. Безопасное форматирование времени без гонки данных
+	globalClockApp.mu.Lock()
+	timeUtf16Ptr := globalClockApp.timeBuffer.FormatNow(time.Now(), timeFormat)
+	globalClockApp.mu.Unlock()
 
-	winAPI.drawText.Call(
+	// 4. Отрисовка текста
+	api.drawText.Call(
 		uintptr(memDC),
 		uintptr(unsafe.Pointer(timeUtf16Ptr)),
-		uintptr(5), // Строка всегда строго 5 символов: "HH:MM"
+		uintptr(5),
 		uintptr(unsafe.Pointer(&rect)),
 		dtLeft|dtNoClip,
 	)
+
 	win.SelectObject(memDC, oldFont)
 
-	winAPI.bitBlt.Call(
+	// 5. Блиты кадра на экран
+	api.bitBlt.Call(
 		uintptr(hdc), 0, 0,
 		uintptr(defaultClockWidth), uintptr(defaultClockHeight),
 		uintptr(memDC), 0, 0,
