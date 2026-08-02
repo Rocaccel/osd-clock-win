@@ -3,7 +3,7 @@
     "description": "On-screen display clock for Windows written in Go",
     "homepage": "https://github.com/Rocaccel/osd-clock-win",
     "license": "GLWT",
-    "url": "https://github.com/Rocaccel/osd-clock-win/releases/download/v0.1.0/osd-clock-win-v0.1.0.zip",
+    "url": "https://github.com/Rocaccel/osd-clock-win/releases/download/v$version/osd-clock-win-v$version.zip",
     "hash": "sha256:06d917cce7964cb21e205172fe44085cf8e8233ae725dcd331008b76e364cb05",
     "bin": "osd-clock.exe",
     "persist": "config.toml",
