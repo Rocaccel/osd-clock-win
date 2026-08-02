@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"syscall"
@@ -324,6 +325,27 @@ func parseColor(colorName string) win.COLORREF {
 	return colorPalette[defaultColorName]
 }
 
+// findConfigFile выполняет каскадный поиск конфига:
+// 1. В текущей рабочей директории (CWD)
+// 2. В директории бинарного файла (.exe)
+func findConfigFile() string {
+	// 1. Проверяем CWD
+	if _, err := os.Stat(defaultConfigFile); err == nil {
+		return defaultConfigFile
+	}
+
+	// 2. Проверяем папку .exe
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		configNearExe := filepath.Join(exeDir, defaultConfigFile)
+		if _, err := os.Stat(configNearExe); err == nil {
+			return configNearExe
+		}
+	}
+
+	return ""
+}
+
 func loadConfig() Config {
 	cfg := Config{
 		FontName:   defaultFontName,
@@ -335,9 +357,12 @@ func loadConfig() Config {
 		TimeFormat: Format24H,
 	}
 
-	if fileData, err := os.ReadFile(defaultConfigFile); err == nil {
-		if err := toml.Unmarshal(fileData, &cfg); err != nil {
-			log.Printf("[WARN] Ошибка парсинга %s, применяются дефолтные параметры: %v", defaultConfigFile, err)
+	configPath := findConfigFile()
+	if configPath != "" {
+		if fileData, err := os.ReadFile(configPath); err == nil {
+			if err := toml.Unmarshal(fileData, &cfg); err != nil {
+				log.Printf("[WARN] Ошибка парсинга %s, применяются дефолтные параметры: %v", configPath, err)
+			}
 		}
 	}
 
@@ -505,11 +530,11 @@ func wndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		return 0
 
 	case win.WM_TIMER:
-		win.InvalidateRect(hwnd, nil, false) // false отключает лишнюю стирку фона (Erase Bkgnd)
+		win.InvalidateRect(hwnd, nil, false)
 		return 0
 
 	case win.WM_ERASEBKGND:
-		return 1 // Предотвращаем мерцание (flicker) при перерисовке
+		return 1
 
 	case win.WM_PAINT:
 		renderClockFrameBuffered(hwnd)
@@ -564,7 +589,7 @@ func renderClockFrameBuffered(hwnd win.HWND) {
 
 	api := getWin32API()
 
-	// 1. Очистка контекста совместимым фоновым цветом
+	// 1. Очистка контекста фоновым цветом
 	api.fillRect.Call(uintptr(memDC), uintptr(unsafe.Pointer(&rect)), uintptr(brushHandle))
 
 	// 2. Настройка текста и шрифта
@@ -572,7 +597,7 @@ func renderClockFrameBuffered(hwnd win.HWND) {
 	win.SetTextColor(memDC, textColor)
 	win.SetBkMode(memDC, win.TRANSPARENT)
 
-	// 3. Безопасное форматирование времени без гонки данных
+	// 3. Форматирование времени
 	globalClockApp.mu.Lock()
 	timeUtf16Ptr := globalClockApp.timeBuffer.FormatNow(time.Now(), timeFormat)
 	globalClockApp.mu.Unlock()
@@ -588,7 +613,7 @@ func renderClockFrameBuffered(hwnd win.HWND) {
 
 	win.SelectObject(memDC, oldFont)
 
-	// 5. Блиты кадра на экран
+	// 5. Вывод кадра
 	api.bitBlt.Call(
 		uintptr(hdc), 0, 0,
 		uintptr(defaultClockWidth), uintptr(defaultClockHeight),
