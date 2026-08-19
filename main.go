@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -29,19 +30,16 @@ var iconBytes []byte
 const (
 	autoPosition = -1
 
-	// Геометрия OSD-часов
 	defaultClockWidth  = 400
 	defaultClockHeight = 120
 	screenMarginRight  = 30
 	screenMarginBottom = 40
 
-	// Win32 API константы
 	lwaColorKey = 0x00000001
 	dtLeft      = 0x00000000
 	dtNoClip    = 0x00000100
-	srccopy     = 0x00CC0020 // Raster operation code (SRCCOPY)
+	srccopy     = 0x00CC0020
 
-	// Настройки отрисовки
 	redrawIntervalMs  = 1000
 	timerIDRender     = 1
 	defaultColorName  = "green"
@@ -51,7 +49,6 @@ const (
 	defaultConfigFile = "config.toml"
 )
 
-// TimeFormat определяет формат отображения времени (12-часовой или 24-часовой).
 type TimeFormat string
 
 const (
@@ -59,7 +56,6 @@ const (
 	Format12H TimeFormat = "12h"
 )
 
-// Config инкапсулирует пользовательские параметры запуска.
 type Config struct {
 	FontName   string       `toml:"font_name"`
 	FontSize   int          `toml:"font_size"`
@@ -71,22 +67,28 @@ type Config struct {
 	TimeFormat TimeFormat   `toml:"time_format"`
 }
 
-// WindowBounds — доменное представление позиции и размеров окна.
 type WindowBounds struct {
 	X, Y          int32
 	Width, Height int32
 }
 
-// TimeBuffer обеспечивает нулевые аллокации (Zero-Allocation) при формировании
-// строки времени для Win32 API (UTF-16) в hot-path отрисовки.
+// TimeBuffer отвечает за формирование UTF-16 строки времени.
 type TimeBuffer struct {
-	// Формат "HH:MM\0" состоит из 5 символов + null-терминатор
 	utf16Buf [6]uint16
 }
 
-// FormatNow24h записывает текущие часы и минуты (24h) напрямую в буфер UTF-16.
-func (tb *TimeBuffer) FormatNow24h(now time.Time) *uint16 {
-	hour, min, _ := now.Clock()
+// Format заменяет группу методов FormatNow/FormatNow12h/FormatNow24h.
+// Читаемость сигнатуры: t указывает на форматируемое время, tf — на формат.
+// Имя метода сокращено до Format, так как имя типа TimeBuffer уже задает контекст.
+func (tb *TimeBuffer) Format(t time.Time, tf TimeFormat) *uint16 {
+	hour, min, _ := t.Clock()
+
+	if tf == Format12H {
+		hour = hour % 12
+		if hour == 0 {
+			hour = 12
+		}
+	}
 
 	tb.utf16Buf[0] = uint16('0' + hour/10)
 	tb.utf16Buf[1] = uint16('0' + hour%10)
@@ -98,44 +100,17 @@ func (tb *TimeBuffer) FormatNow24h(now time.Time) *uint16 {
 	return &tb.utf16Buf[0]
 }
 
-// FormatNow12h записывает текущие часы и минуты в 12-часовом формате (без AM/PM) в буфер UTF-16.
-func (tb *TimeBuffer) FormatNow12h(now time.Time) *uint16 {
-	hour, min, _ := now.Clock()
-
-	hour12 := hour % 12
-	if hour12 == 0 {
-		hour12 = 12
-	}
-
-	tb.utf16Buf[0] = uint16('0' + hour12/10)
-	tb.utf16Buf[1] = uint16('0' + hour12%10)
-	tb.utf16Buf[2] = uint16(':')
-	tb.utf16Buf[3] = uint16('0' + min/10)
-	tb.utf16Buf[4] = uint16('0' + min%10)
-	tb.utf16Buf[5] = 0
-
-	return &tb.utf16Buf[0]
-}
-
-// FormatNow формирует время в буфере в соответствии с выбранным форматом.
-func (tb *TimeBuffer) FormatNow(now time.Time, fmt TimeFormat) *uint16 {
-	if fmt == Format12H {
-		return tb.FormatNow12h(now)
-	}
-	return tb.FormatNow24h(now)
-}
-
 // ============================================================================
 // 2. ИНКАПСУЛЯЦИЯ WIN32 DLL
 // ============================================================================
 
 type win32API struct {
 	setLayeredWindow *syscall.LazyProc
-	createFont       *syscall.LazyProc
-	drawText         *syscall.LazyProc
-	fillRect         *syscall.LazyProc
+	createFont        *syscall.LazyProc
+	drawText          *syscall.LazyProc
+	fillRect          *syscall.LazyProc
 	createSolidBrush *syscall.LazyProc
-	bitBlt           *syscall.LazyProc
+	bitBlt            *syscall.LazyProc
 }
 
 var (
@@ -143,7 +118,6 @@ var (
 	winAPI     *win32API
 )
 
-// getWin32API гарантирует безопасную и синглтон-инициализацию WinAPI методов.
 func getWin32API() *win32API {
 	winAPIOnce.Do(func() {
 		user32 := syscall.NewLazyDLL("user32.dll")
@@ -151,11 +125,11 @@ func getWin32API() *win32API {
 
 		winAPI = &win32API{
 			setLayeredWindow: user32.NewProc("SetLayeredWindowAttributes"),
-			createFont:       gdi32.NewProc("CreateFontW"),
-			drawText:         user32.NewProc("DrawTextW"),
-			fillRect:         user32.NewProc("FillRect"),
+			createFont:        gdi32.NewProc("CreateFontW"),
+			drawText:          user32.NewProc("DrawTextW"),
+			fillRect:          user32.NewProc("FillRect"),
 			createSolidBrush: gdi32.NewProc("CreateSolidBrush"),
-			bitBlt:           gdi32.NewProc("BitBlt"),
+			bitBlt:            gdi32.NewProc("BitBlt"),
 		}
 	})
 	return winAPI
@@ -171,18 +145,14 @@ type ClockWindow struct {
 	config Config
 	hwnd   win.HWND
 
-	// Кэшированные разрешения экрана для мгновенного CalculateBounds
 	screenWidth  int32
 	screenHeight int32
 
-	// Кэшированные Win32 GDI-ресурсы
 	fontHandle  win.HFONT
 	brushHandle win.HBRUSH
 
-	// Предварительно выделенный буфер времени (потокобезопасная отрисовка)
 	timeBuffer TimeBuffer
-
-	isVisible bool
+	isVisible  bool
 }
 
 func NewClockWindow(cfg Config) *ClockWindow {
@@ -194,7 +164,6 @@ func NewClockWindow(cfg Config) *ClockWindow {
 	return cw
 }
 
-// UpdateScreenMetrics кэширует параметры экрана при старте и смене разрешения
 func (cw *ClockWindow) UpdateScreenMetrics() {
 	sw := win.GetSystemMetrics(win.SM_CXSCREEN)
 	sh := win.GetSystemMetrics(win.SM_CYSCREEN)
@@ -271,6 +240,42 @@ func (cw *ClockWindow) ToggleVisibility(menuItem *systray.MenuItem) {
 	}
 }
 
+// ReloadConfig отвечает за горячую перезагрузку параметров из config.toml.
+// Процедурный стиль: чёткий последовательный поток действий без побочных эффектов CLI-флажков.
+func (cw *ClockWindow) ReloadConfig() {
+	configPath := findConfigFile()
+	if configPath == "" {
+		log.Printf("[WARN] Файл конфигурации не найден для перезагрузки")
+		return
+	}
+
+	newCfg := defaultConfig()
+	if fileData, err := os.ReadFile(configPath); err == nil {
+		if err := toml.Unmarshal(fileData, &newCfg); err != nil {
+			log.Printf("[WARN] Ошибка парсинга %s при перезагрузке: %v", configPath, err)
+			return
+		}
+	}
+	newCfg.TextColor = parseColor(newCfg.Color)
+
+	cw.mu.Lock()
+	cw.config = newCfg
+	hwnd := cw.hwnd
+	cw.mu.Unlock()
+
+	// Инвалидируем старые GDI-ресурсы и пересоздаём их под новые параметры
+	cw.FreeGDIResources()
+	if err := cw.InitGDIResources(); err != nil {
+		log.Printf("[ERROR] Сбой инициализации GDI-ресурсов: %v", err)
+	}
+
+	cw.UpdatePosition()
+	if hwnd != 0 {
+		win.InvalidateRect(hwnd, nil, false)
+	}
+	log.Printf("[INFO] Конфигурация успешно обновлена из %s", configPath)
+}
+
 func (cw *ClockWindow) InitGDIResources() error {
 	cw.mu.Lock()
 	defer cw.mu.Unlock()
@@ -294,7 +299,6 @@ func (cw *ClockWindow) InitGDIResources() error {
 	}
 	cw.fontHandle = win.HFONT(hFont)
 
-	// Кисть прозрачного цвета (RGB 0,0,0) для lwaColorKey
 	hBrush, _, _ := api.createSolidBrush.Call(uintptr(0))
 	if hBrush == 0 {
 		win.DeleteObject(win.HGDIOBJ(cw.fontHandle))
@@ -358,8 +362,9 @@ func findConfigFile() string {
 	return ""
 }
 
-func loadConfig() Config {
-	cfg := Config{
+// defaultConfig возвращает чистый базовый конфиг без побочных эффектов.
+func defaultConfig() Config {
+	return Config{
 		FontName:   defaultFontName,
 		FontSize:   defaultFontSize,
 		FontWeight: defaultFontWeight,
@@ -368,12 +373,17 @@ func loadConfig() Config {
 		PositionY:  autoPosition,
 		TimeFormat: Format24H,
 	}
+}
+
+// loadConfig выполняет только первичную инициализацию при старте приложения (с флагами CLI).
+func loadConfig() Config {
+	cfg := defaultConfig()
 
 	configPath := findConfigFile()
 	if configPath != "" {
 		if fileData, err := os.ReadFile(configPath); err == nil {
 			if err := toml.Unmarshal(fileData, &cfg); err != nil {
-				log.Printf("[WARN] Ошибка парсинга %s, применяются дефолтные параметры: %v", configPath, err)
+				log.Printf("[WARN] Ошибка парсинга %s: %v", configPath, err)
 			}
 		}
 	}
@@ -415,8 +425,6 @@ func loadConfig() Config {
 }
 
 var globalClockApp *ClockWindow
-
-// atomicRenderState отслеживает статус рендеринга кадра во избежание наслоения
 var atomicRenderState uint32
 
 // ============================================================================
@@ -433,11 +441,13 @@ func main() {
 func onReady() {
 	systray.SetIcon(iconBytes)
 	systray.SetTitle("Desktop Clock")
-	systray.SetTooltip("Прозрачные Часы")
+	systray.SetTooltip("OSD-Clock")
 
-	mToggleVisible := systray.AddMenuItem("Показать часы", "")
+	mToggleVisible := systray.AddMenuItem("Показать часы", "Показать/Спрятать")
 	mToggleVisible.Check()
-
+	systray.AddSeparator()
+	mOpenConfig := systray.AddMenuItem("Открыть конфиг", "Редактировать конфиг")
+	mReload := systray.AddMenuItem("Перезагрузить конфиг", "Перезагрузить конфиг")
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Выход", "")
 
@@ -449,6 +459,15 @@ func onReady() {
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 				return
+			case <-mOpenConfig.ClickedCh:
+				configPath := findConfigFile()
+				if configPath == "" {
+					configPath = defaultConfigFile
+				}
+				exec.Command("notepad.exe", configPath).Start()
+			case <-mReload.ClickedCh:
+				// Явный вызов метода перезагрузки
+				globalClockApp.ReloadConfig()
 			}
 		}
 	}()
@@ -492,7 +511,7 @@ func startClockWindow() {
 		LpfnWndProc:   syscall.NewCallback(wndProc),
 		HInstance:     hInstance,
 		LpszClassName: className,
-		HCursor:       win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW)),
+		HCursor:        win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW)),
 	}
 
 	if atom := win.RegisterClassEx(&wndClass); atom == 0 {
@@ -541,7 +560,6 @@ func startClockWindow() {
 func wndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 	switch msg {
 	case win.WM_DISPLAYCHANGE:
-		// Обновляем кэш параметров монитора и пересчитываем позицию
 		globalClockApp.UpdateScreenMetrics()
 		globalClockApp.UpdatePosition()
 		return 0
@@ -554,7 +572,7 @@ func wndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		return 1
 
 	case win.WM_PAINT:
-		renderClockFrameBuffered(hwnd)
+		renderClockFrame(hwnd)
 		return 0
 
 	case win.WM_DESTROY:
@@ -567,8 +585,9 @@ func wndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 	return win.DefWindowProc(hwnd, msg, wParam, lParam)
 }
 
-func renderClockFrameBuffered(hwnd win.HWND) {
-	// Исключаем повторный вход/перенасыщение очереди кадров
+// renderClockFrame переименована с renderClockFrameBuffered.
+// Убраны лишние детали реализации из названия.
+func renderClockFrame(hwnd win.HWND) {
 	if !atomic.CompareAndSwapUint32(&atomicRenderState, 0, 1) {
 		return
 	}
@@ -612,20 +631,16 @@ func renderClockFrameBuffered(hwnd win.HWND) {
 
 	api := getWin32API()
 
-	// 1. Очистка контекста
 	api.fillRect.Call(uintptr(memDC), uintptr(unsafe.Pointer(&rect)), uintptr(brushHandle))
 
-	// 2. Настройка текста и шрифта
 	oldFont := win.SelectObject(memDC, win.HGDIOBJ(fontHandle))
 	win.SetTextColor(memDC, textColor)
 	win.SetBkMode(memDC, win.TRANSPARENT)
 
-	// 3. Форматирование времени (внутри Lock для защиты timeBuffer)
 	globalClockApp.mu.Lock()
-	timeUtf16Ptr := globalClockApp.timeBuffer.FormatNow(time.Now(), timeFormat)
+	timeUtf16Ptr := globalClockApp.timeBuffer.Format(time.Now(), timeFormat)
 	globalClockApp.mu.Unlock()
 
-	// 4. Отрисовка текста
 	api.drawText.Call(
 		uintptr(memDC),
 		uintptr(unsafe.Pointer(timeUtf16Ptr)),
@@ -636,7 +651,6 @@ func renderClockFrameBuffered(hwnd win.HWND) {
 
 	win.SelectObject(memDC, oldFont)
 
-	// 5. Вывод кадра через Double Buffering
 	api.bitBlt.Call(
 		uintptr(hdc), 0, 0,
 		uintptr(defaultClockWidth), uintptr(defaultClockHeight),
