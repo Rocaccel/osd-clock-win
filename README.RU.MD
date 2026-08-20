@@ -222,12 +222,6 @@ osd-clock.exe -font "Segoe UI" -size 48 -color white
 
 ---
 
-## Лицензия
-
-Проект распространяется по лицензии GLWT(Good Luck With That) Public License.
-
----
-
 ## Благодарности
 
 Иконка приложения:
