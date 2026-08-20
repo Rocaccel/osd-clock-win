@@ -221,12 +221,6 @@ Characteristics:
 
 ---
 
-## License
-
-This project is distributed under the GLWT(Good Luck With That) Public License.
-
----
-
 ## Credits
 
 Application icon:
