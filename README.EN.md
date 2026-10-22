@@ -33,11 +33,11 @@ A lightweight on-screen clock for Windows: a transparent window above all other 
 ### Via Scoop
 
 ```powershell
-scoop bucket add osd-clock https://github.com/Rocaccel/osd-clock-win
+scoop bucket add rocaccel https://github.com/Rocaccel/scoop-bucket
 scoop install osd-clock
 ```
 
-The `config.toml` file survives updates (`persist` in the manifest).
+The `config.toml` file survives updates (`persist` in the manifest), and the manifest is refreshed automatically on every release.
 
 ### From releases
 
@@ -127,7 +127,7 @@ osd-clock-win/
 ├── icon.ico           # icon for tray and rsrc.syso
 ├── rsrc.syso          # embedded icon (build)
 ├── winres/            # icon sources and winres.json
-├── bucket/            # Scoop manifest
+├── .github/           # scoop manifest publishing workflow
 ├── go.mod
 └── go.sum
 ```

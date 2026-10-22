@@ -33,11 +33,11 @@
 ### Через Scoop
 
 ```powershell
-scoop bucket add osd-clock https://github.com/Rocaccel/osd-clock-win
+scoop bucket add rocaccel https://github.com/Rocaccel/scoop-bucket
 scoop install osd-clock
 ```
 
-Конфигурация из `config.toml` переживает обновления (`persist` в манифесте).
+Конфигурация из `config.toml` переживает обновления (`persist` в манифесте), а манифест автоматически обновляется при каждой публикации релиза.
 
 ### Из релизов
 
@@ -127,7 +127,7 @@ osd-clock-win/
 ├── icon.ico           # иконка для трей и rsrc.syso
 ├── rsrc.syso          # встроенная иконка (сборка)
 ├── winres/            # исходники иконки и winres.json
-├── bucket/            # Scoop-манифест
+├── .github/           # workflow публикации scoop-манифеста
 ├── go.mod
 └── go.sum
 ```
