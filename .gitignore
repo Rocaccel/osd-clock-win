@@ -1,3 +1,4 @@
 # Build artifacts
+/dist/
 /osd-clock.exe
 /osd-clock-win-*.zip
