@@ -1,0 +1,72 @@
+name: Publish scoop manifest
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v0.1.3)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve tag
+        id: rel
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Render manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.rel.outputs.tag }}"
+          VERSION="${{ steps.rel.outputs.version }}"
+          ASSET="osd-clock-win-${VERSION}.zip"
+
+          # digest of the release asset (sha256), served by the GitHub API
+          HASH=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" \
+            --jq ".assets[] | select(.name == \"$ASSET\") | .digest // empty" | sed 's/^sha256://')
+
+          # fallback: download the asset and hash it locally
+          if [ -z "$HASH" ]; then
+            echo "no digest from API, downloading asset to hash"
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$ASSET" --dir dist
+            HASH=$(sha256sum "dist/$ASSET" | cut -d' ' -f1)
+          fi
+
+          test -n "$HASH"
+          echo "hash=$HASH"
+          sed -e "s/{{VERSION}}/$VERSION/g" -e "s/{{HASH}}/$HASH/g" \
+            .github/scoop/osd-clock.json > /tmp/osd-clock.json
+          cat /tmp/osd-clock.json
+
+      - name: Push manifest to scoop-bucket
+        env:
+          BUCKET_PUSH_TOKEN: ${{ secrets.BUCKET_PUSH_TOKEN }}
+        run: |
+          TAG="${{ steps.rel.outputs.tag }}"
+          git clone --depth 1 \
+            "https://x-access-token:${BUCKET_PUSH_TOKEN}@github.com/Rocaccel/scoop-bucket.git" /tmp/scoop-bucket
+          cp /tmp/osd-clock.json /tmp/scoop-bucket/bucket/osd-clock.json
+          cd /tmp/scoop-bucket
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bucket/osd-clock.json
+          if git diff --cached --quiet; then
+            echo "manifest already up to date"
+            exit 0
+          fi
+          git commit -m "chore(osd-clock): обновить манифест до $TAG"
+          git push
