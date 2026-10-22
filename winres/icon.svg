@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <title>OSD Clock</title>
+  <!-- Hourglass on graphite rounded tile, enlarged to near full height -->
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#363B42"/>
+  <!-- frame bars -->
+  <rect x="64" y="24" width="128" height="22" rx="11" fill="#E9ECF1"/>
+  <rect x="64" y="210" width="128" height="22" rx="11" fill="#E9ECF1"/>
+  <!-- glass funnel (top) -->
+  <path d="M78 46 H178 L136 122 Q128 130 120 122 Z" fill="#E9ECF1"/>
+  <!-- glass bulb (bottom) -->
+  <path d="M120 134 Q128 126 136 134 L178 210 H78 Z" fill="#E9ECF1"/>
+  <!-- sand: top pile -->
+  <path d="M91 60 H165 L134 121 Q128 127 122 121 Z" fill="#F2B33D"/>
+  <!-- sand: falling stream -->
+  <rect x="125" y="122" width="6" height="56" fill="#F2B33D"/>
+  <!-- sand: bottom mound -->
+  <path d="M89 210 Q128 142 167 210 Z" fill="#F2B33D"/>
+</svg>
